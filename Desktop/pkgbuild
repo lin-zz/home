@@ -1,0 +1,35 @@
+--interactive -v -vv
+pkgbuild --define '_with_debug --with-debug' -bp
+pkgbuild --define '_with_debug --with-debug _with_l10n --with-l10n' -bc --short-circuit
+pkgbuild --define '_with_debug --with-debug' -bi --short-circuit
+
+pkgbuild --define '_with_debug --with-debug' -bb --short-circuit
+pkgbuild --define '_with_debug --with-debug' -ba --short-circuit
+
+--with-l10n
+_with_l10n --with-l10n
+
+pkgbuild --nodeps -bp
+pkgbuild -bc --short-circuit
+pkgbuild -bi --short-circuit
+pkgbuild -bb --short-circuit
+pkgbuild -ba --short-circuit
+
+
+--download
+pkgtool prep
+pkgtool build-only
+pkgtool build
+pkgtool uninstall-pkgs
+
+
+export LD_LIBRARY_PATH=/var/tmp/SUNWgnome-base-libs-2.15.4-build/usr/lib/
+
+
+also, under Solaris/manpages/Makefile, need to edit this to remove packaging of gnome-system-log.1 manpage into SUNWgnome-utils man page tarball, and re-generate the man page tarball for SUNWgnome-utils
+
+install --mode=0755 %SOURCE4 $RPM_BUILD_ROOT%{_mandir}/man1
+
+
+find . -type f -a ! -name "*.png" -a ! -name "*.bmp" -a ! -name "*.ico" -a ! -name "*.cur" -a ! -name "*.dll" -exec dos2unix {} {} \;
+

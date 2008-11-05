@@ -1,0 +1,259 @@
+#!/usr/bin/env perl
+#
+# Rexec protocol handler (stripped down from rlogin/rsh/rexec)
+#
+# $Id: rexec.pl,v 1.3 2000/02/15 13:38:39 casper Exp $
+#
+# casper@holland
+#
+# Usage:
+# host, remote user, password, command
+#
+use Getopt::Std;
+use POSIX qw(:errno_h :signal_h);
+use Socket;
+
+$socket = 'S n a4 x8';
+$inaddrany = pack($socket,AF_INET,0,"\0\0\0\0");
+die "tcp: unknown protocol\n"
+	    unless ($ipproto_tcp = (getprotobyname('tcp'))[2]);
+
+sub usage {
+    die "Usage: $0 [-n] [-l user] host cmd [args]\n";
+}
+
+getopts("l:n") || usage();
+if (defined($opt_l)) {
+    $user = $opt_l;
+} else {
+    $user = (getpwuid($<))[0];
+}
+usage if ($#ARGV < 1);
+
+@args = ($ARGV[0],'exec', $user, getpass("$user\@$ARGV[0]"));
+ 
+$cmd = "@ARGV[1 .. $#ARGV]";
+
+push(@args, $cmd);
+push(@args, CONNECTION);
+push(@args, BACK);
+
+@res = rcmd(@args);
+if ($#res < $[) {
+    doit(defined($opt_n) ? undef : STDIN,STDOUT,STDERR,CONNECTION, BACK);
+} else {
+    print STDERR @res;
+}
+#
+# If we open TTY w/ +<, stdio will flush the password out when doing the
+# Intervening seek.  This doesn't seem right.
+#
+sub getpass {
+    local ($p);
+    open(RTTY,"</dev/tty");
+    open(OTTY,">/dev/tty");
+    select(OTTY); $| = 1;
+    system("stty -echo </dev/tty>/dev/tty 2>&1");
+    print OTTY "($_[0]) Password: ";
+    $p = <RTTY>;
+    close(RTTY);
+    print OTTY "\n";
+    close(OTTY);
+    system("stty echo </dev/tty>/dev/tty 2>&1");
+    chop($p);
+    $p;
+}
+
+sub bindreservedport {
+    local($handle) = @_;
+    local($here);
+    local($i);
+
+    foreach $i (1 .. 512) {
+	 $here = pack($socket,AF_INET,1024-$i,"\0\0\0\0");
+	 if (bind($handle, $here)) {
+	    return 1;
+	 } else {
+	    if ($! == EACCES) {
+		#warn "bind: $!\n";
+		return undef;
+	    }
+	 }
+    }
+    return undef;
+}
+
+# Rcmd subroutine.  Pretty much like rcmd(3);
+#
+# Call:
+# $hostname (made canonical)
+# service (numeric or literal),
+# $remoteuser (user on server)
+# $luser (user on client or password for rexec)
+# $cmd (TERM/speed for rlogin)
+# FILEhandle for connection
+# FILEhandle for stderr/signal connection (optional)
+#
+#
+#
+# Return:
+#	() - Success
+#	(err messages) - can't create connection, don't even try rest.
+
+
+sub rcmd {
+
+    local($host, $service, $ruser, $luser, $cmd, $iof, $errf) = @_;
+
+    $service =~ s/rsh/shell/;
+    $service =~ s/^r//;
+    $noerrf = !defined($errf);
+
+    if ($service =~ /^\d+$/) {
+	$port = $service;
+    } else {
+	return ("$service/tcp: unknown service\n")
+	    unless ($port = (getservbyname($service,'tcp'))[2]);
+    }
+
+    (($name,$j,$j,$j,$thataddr) = gethostbyname($host)) ||
+	return ("$host: unknown host\n");
+
+    $host = $_[0] = $name;
+
+    $there = pack($socket,AF_INET,$port,$thataddr);
+
+    (($noerrf || socket(REP,AF_INET,SOCK_STREAM,$ipproto_tcp)) &&
+     socket($iof,AF_INET,SOCK_STREAM,$ipproto_tcp) &&
+     (bindreservedport($iof) || bind($iof,$inaddrany)) &&
+     ($noerrf || (bindreservedport(REP) || bind(REP,$inaddrany)) &&
+		 listen(REP,1)) &&
+     connect($iof,$there)
+      ) || return ("$!");
+
+    if ($noerrf) {
+	$port = "";
+    } else {
+	$esock = getsockname(REP);
+	($j,$port,$j) = unpack($socket,$esock);
+    }
+    local($fh) = select($iof); $| = 1;
+    select($fh);
+
+    print $iof "$port\0$ruser\0$luser\0$cmd\0";
+
+    if (getc($iof) ne "\0") {
+	local(@out);
+	shutdown($iof,0);
+	while (<$iof>) {
+	    push (@out,"r$service $host: $_");
+	    getc $iof; # get the \1.
+	}
+	close($iof);
+	close(REP) if (! $noerrf);
+	@out = ("Unexpected EOF\n") unless ($#out >= $[);
+	return (@out);
+    }
+    if (! $noerrf) {
+	accept($errf,REP);
+	close(REP);
+    }
+    return ();
+}
+
+#
+# Send signals als bytes over the stderr pipe.
+#
+
+sub doit {
+    local($in, $out, $err, $con, $econ) = @_;
+    local($cur);
+    local($use_stdin,$use_econ) = (defined($in),defined($econ));
+    local(@oldsigs);
+    local($rin,$rout,$eout,$ein);
+
+    $cur = select($con); $| = 1;
+    if ($use_econ) { select($econ); $| = 1; }
+    select($err); $| = 1;
+    select($out); $| = 1;
+
+    if ($use_econ) {
+	$ehandle = $econ;
+	@oldsigs = ($SIG{'INT'}, $SIG{'QUIT'}, $SIG{'HUP'}, $SIG{'TERM'});
+	$SIG{'INT'} = $SIG{'QUIT'} = $SIG{'HUP'} = $SIG{'TERM'} = 'handlesig';
+    }
+
+    $rin = '';
+    vec($rin,fileno($in),1) = 1 if ($use_stdin);
+    # Loop stop condition.
+    $stop = unpack("%b*", $rin);
+    vec($rin,fileno($con),1) = 1;
+    vec($rin,fileno($econ),1) = 1 if ($use_econ);
+
+    shutdown($con,1) unless ($use_stdin);
+
+    $bytes = '';
+    # Loop until no file descriptor in $rin, with the exception of
+    # stdin, if stdin was in the original set.  + 0 to convert
+    # to numeric
+    $ein = '';
+    vec($ein,fileno($con),1) = 1;
+    while (unpack("%b*", $rin) + 0 > $stop) {
+
+	die "select $!"
+	    if (($nready = select($rout = $rin, undef, $eout = $ein, undef)) <= 0 &&
+		    $! != EINTR);
+
+	next if ($nready <= 0);
+
+	if ($use_econ && vec($rout,fileno($econ),1)) {
+	    print $err $bytes
+		if (($nread = sysread($econ, $bytes, 1024)) > 0);
+	    if ($nread > 0) {
+		$rerr = '';
+		vec($rerr,fileno($econ),1) = 1;
+		next if (select($rerr,undef,undef,0.1) == 1);
+	    } else {
+		vec($rin,fileno($econ),1) = 0;
+	    }
+	}
+	if (vec($eout,fileno($con),1)) {
+	    $from = recv($con,$bytes,100,MSG_OOB);
+	    $ein = '' unless defined($from);
+	    print STDERR "OOB: ", length($bytes), ": \"$bytes\"\n";
+	}
+	if (vec($rout,fileno($con),1)) {
+	    print $bytes
+		if (($nread = sysread($con, $bytes, 1024)) > 0);
+	    vec($rin,fileno($con),1) = 0 if ($nread == 0);
+	}
+	if ($use_stdin && vec($rout,fileno($in),1)) {
+	    print $con $bytes
+		if (($nread = sysread($in, $bytes, 1024)) > 0);
+
+	    if ($nread == 0) {
+		vec($rin,fileno($in),1) = 0;
+		shutdown($con,1);
+	    }
+	}
+    }
+    close($con);
+    if ($use_econ) {
+	close($econ);
+	($SIG{'INT'}, $SIG{'QUIT'}, $SIG{'HUP'}, $SIG{'TERM'}) = @oldsigs;
+    }
+    select($cur);
+}
+
+#
+# Send signals als bytes over the stderr pipe.
+#
+sub handlesig {
+    local($sig) = @_;
+    local($sigval);
+
+    $sigval = eval("&POSIX::SIG$sig");
+
+    print $ehandle pack("c",$sigval);
+    $SIG{$sig} = 'handlesig';
+}

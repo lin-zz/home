@@ -1,0 +1,4 @@
+# Note /usr/bin/sed will proceed this file, require a RET in the last line
+# Notice the order
+
+/lin/opt /kiss/opt /opt

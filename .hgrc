@@ -1,0 +1,19 @@
+[ui]
+username = Lin Ma <Lin.Ma@Sun.COM>
+
+[extensions]
+hgext.cdm = /opt/onbld/lib/python/onbld/hgext/cdm.py
+hgext.hgk =
+hgext.mq =
+hgext.extdiff =
+
+[hgk]
+path=/usr/demo/mercurial/hgk
+
+[extdiff]
+cmd.gdiff =
+opts.gdiff = -Nprc5
+
+cmd.kdiff = kdiff3
+cmd.tkdiff =
+cmd.vdiff = meld

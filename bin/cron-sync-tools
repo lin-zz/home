@@ -1,0 +1,81 @@
+#!/bin/sh
+#
+# This sync should happen prev to cron-sync-repos, since the latter will use
+# the tools which this script will process.
+#
+
+#set -xv
+umask 022
+##
+## Vars and Tools
+##
+
+PATH=$HOME/bin:/bin:/usr/bin:/usr/sbin
+export PATH
+
+MACH=`uname -p`
+# SPROHOST="lm161491@slug-17.eng.sun.com"
+# SPROPREFIX="/export/${MACH}/opt"
+SPROHOST="lm161491@greatwall.prc.sun.com"
+SPROPREFIX="/workspaces/onnv-tools-prc/${MACH}/opt"
+LOCALPREFIX="/lin /kiss /"
+
+
+fail () { echo "$1"; exit 1; }
+
+[ -z "$SSH_AUTH_SOCK" ] && SSH_AUTH_SOCK=`find /tmp -name 'agent.*' -user $LOGNAME 2>/dev/null`
+[ -z "$SSH_AUTH_SOCK" ] && fail "Can't find SSH_AUTH_SOCK"
+export SSH_AUTH_SOCK
+
+# set to "enter" only
+IFS="
+"
+
+for profile in `profiles`
+do
+	if [ $profile = "Software Installation" -o \
+		$profile = "Primary Administrator" ]; then
+		AUTH=1
+		break;
+	fi
+done
+
+[ `id -u` = 0 ] || [ ! "x$AUTH" = "x1" ] && fail "At lease need a profile Software Installation"
+
+# restore to "enter and blank"
+IFS=" 
+"
+
+RSYNC=/usr/bin/rsync
+[ ! -x $RSYNC ] && fail "Can't find $RSYNC"
+RSYNC="pfexec $RSYNC"
+RSYNC_ARGS="--rsh=ssh -avz --delete --log-file=/tmp/cron-sync-tools.log"
+
+
+##
+##  Find the correct local directory
+##
+
+for prefix in $LOCALPREFIX
+do
+	if [ -d "$prefix/opt/SUNWspro" ]; then
+	LOCALDIR="$prefix/opt"
+	break
+	fi
+done
+
+[ ! -d ${LOCALDIR}/SUNWspro ] && fail "Can't find directory ${SPROPREFIX}/SUNWspro"
+$RSYNC $RSYNC_ARGS ${SPROHOST}:${SPROPREFIX}/SUNWspro/SS12 ${LOCALDIR}/SUNWspro
+$RSYNC $RSYNC_ARGS ${SPROHOST}:${SPROPREFIX}/SUNWspro/SS11 ${LOCALDIR}/SUNWspro
+# Do not update teamware anymore
+# $RSYNC $RSYNC_ARGS ${SPROHOST}:${SPROPREFIX}/SUNWspro/SOS8/\* ${LOCALDIR}/teamware
+
+cd ${HOME}
+rm -rf SUNWonbld
+yes | pfexec pkgrm SUNWonbld
+ssh onnv.sfbay " \
+cd /export/onnv-gate/public/packages/${MACH}; \
+find SUNWonbld | cpio -o | gzip " | \
+gunzip -c | cpio -idm
+yes | pfexec pkgadd -d . SUNWonbld
+rm -rf SUNWonbld

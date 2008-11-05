@@ -1,0 +1,122 @@
+#!/bin/sh
+#
+# The clone is updated nightly from /ws/onnv-gate around 11PM Pacific time,
+# So should not do bringover from /ws/onnv-clone around 2PM Beijing time.
+#
+
+umask 022
+##
+## Vars and Tools
+##
+
+WSDIRS="workspace gnome2 builds"
+BASEDIRS="$HOME /"
+
+PATH=$HOME/bin:/bin:/usr/bin:/opt/jdsbld/bin:/ws/onnv-tools-prc/teamware/bin
+export PATH
+
+fail () { echo "$1"; exit 1; }
+
+CODEMGR_DIR_FLG=$HOME/bin/turbo-dir.flp
+[ -x $CODEMGR_DIR_FLG ] || fail "Can't find $CODEMGR_DIR_FLG"
+export CODEMGR_DIR_FLG
+
+CM_ENV=$HOME/bin/cm_env
+[ -x $CM_ENV ] || fail "Can't find $CM_ENV"
+
+CSCOPE_INDEXER=$HOME/bin/cscope-indexer
+[ -x $CSCOPE_INDEXER ] || fail "Can't find $CSCOPE_INDEXER"
+
+XREF_WRAPPER="$HOME/bin/xref-wrapper"
+[ -x $XREF_WRAPPER ] || fail "Can't find $XREF_WRAPPER"
+
+HACKED_XREF=$HOME/bin/xref
+[ -x $HACKED_XREF ] || fail "Can't find $HACKED_XREF"
+
+SSH_AUTH_SOCK=`find /tmp -name 'agent.*' -user $LOGNAME 2>/dev/null`
+[ -z "$SSH_AUTH_SOCK" ] && fail "Can't find SSH_AUTH_SOCK"
+export SSH_AUTH_SOCK
+
+##
+##  The paths which will build cscope.out should list in the file
+##  `pwd`/$CSCOPE_PATH
+##  NOTE the path should be the relative path correspond to `pwd`
+##
+CSCOPE_PATH=cscope_path
+CSCOPE_LOG=cscope_log
+build_cscope ()
+{
+	if [ -f $CSCOPE_PATH -a -r $CSCOPE_PATH ]; then
+		CSCOPE_PATH_OLDPWD=`pwd`
+		for lcscope_path in `cat $CSCOPE_PATH`
+		do
+			cd $CSCOPE_PATH_OLDPWD/$lcscope_path \
+			&& $CSCOPE_INDEXER -r >$CSCOPE_LOG 2>&1
+		done
+		unset lcscope_path
+		return 0
+	else
+		return 1
+	fi
+}
+
+ONBLD_XREF_PATH=xref_path
+ONBLD_XREF_LOG=xref_log
+build_xref ()
+{
+	if [ -f $ONBLD_XREF_PATH -a -r $ONBLD_XREF_PATH ]; then
+		ONBLD_XREF_PATH_OLDPWD=`pwd`
+		for lonbld_xref_path in `cat $ONBLD_XREF_PATH`
+		do
+			cd $ONBLD_XREF_PATH_OLDPWD/$lonbld_xref_path \
+			&& $XREF_WRAPPER -f -m /dev/null >$ONBLD_XREF_LOG 2>&1
+		done
+		unset lonbld_xref_path
+		return 0
+	else
+		return 1
+	fi
+}
+
+##
+##  Make sure to pass an absolute path
+##
+repos_foreach ()
+{
+	for li in $1/*
+	do
+		if [ -d $li -a -w $li -a -x $li -a -r $li ]; then
+			cd $li
+			echo $li
+			if [ -d .hg ]; then
+				hg pull
+			elif [ -d .svn ]; then
+				svn up
+			elif [ -d CVS ]; then
+				cvs up -dPA
+# Skip old teamware
+#			elif [ -d Codemgr_wsdata ]; then
+#				$CM_ENV -o bringover .
+			else
+				continue
+			fi
+			( build_xref || build_cscope )
+		fi
+	done
+	unset li
+}
+
+##
+##  MAIN
+##
+
+if [ "x$SSH_AUTH_SOCK" = "x" ]; then
+    echo "Please check there is only one session for you"
+    exit 1
+fi
+
+for i in $BASEDIRS; do
+	for j in $WSDIRS; do
+		[ -d $i/$j ] && repos_foreach $i/$j
+	done
+done

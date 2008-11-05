@@ -1,0 +1,9 @@
+# default number of jobs is 2
+
+# my laptop
+hunting { jobs = 1 }
+
+# 2 core host
+powerplay_malin { jobs = 4 , path = "/ws/onnv-tools-prc/SUNWspro/SS11/bin" }
+lucky_malin { jobs = 4 }
+

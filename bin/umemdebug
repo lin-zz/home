@@ -1,0 +1,6 @@
+#!/bin/sh
+
+UMEM_DEBUG=audit=30,contents=512,guards UMEM_LOGGING=transaction,contents,fail
+LD_PRELOAD=libumem.so.1
+export UMEM_DEBUG LD_PRELOAD
+exec $*

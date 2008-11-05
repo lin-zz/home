@@ -1,0 +1,74 @@
+#!/bin/bash
+# Must be run in bash or zsh
+#set -x
+
+if [ "${localroot}" = "" ]; then
+	localroot=$HOME
+fi
+
+[ ! -d ${localroot}/bin ] && mkdir -p ${localroot}/bin
+
+# Clean the invalid soft links
+for slink_p in ${localroot}/bin/*
+do
+    if [[ -h ${slink_p} ]]; then
+	slink_n=`basename ${slink_p}`
+	echo "    rm link ${slink_n} ..."
+	rm -f ${slink_p}
+    fi
+done
+
+# Caculate the relative path
+target_dir=`dirname ${localroot}/bin`
+parent=..
+while [ ${target_dir} != ${HOME} ]
+do
+    target_dir=`dirname ${target_dir}`
+    parent=${parent}/..
+done
+
+# Build Documents excutable scripts link
+echo "Build Documents executable scripts link"
+cur_dir=`pwd` && cd ${localroot}/bin
+doc_p=${HOME}/Documents
+pdoc_p=${parent}/Documents
+for script_p in ${doc_p}/* ; do
+	if [ -x ${script_p} ] && [ -f ${script_p} ]; then
+		script_n=`basename ${script_p}`
+		echo "    link ${script_n} ..."
+		rm -f ${script_n}
+		ln -s ${pdoc_p}/${script_n} ${script_n}
+	fi
+done
+
+
+# echo "Build local softwares link"
+# echo "Local Root is ${localroot}"
+# echo "Local BIN is ${localbin}"
+# for soft_p in ${localroot}/* ; do
+# 	echo "Deal with `basename ${soft_p}` ..."
+# 	if [ -d ${soft_p}/bin ]; then
+# 		echo "    `basename ${soft_p}` has bin ..."
+# 		for soft_bin_p in  ${soft_p}/bin/* ; do
+# 			soft_bin_n=`basename ${soft_bin_p}`
+# 			if [ -x ${soft_bin_p} ] && [ -f ${soft_bin_p} ]; then
+# 				echo "        link ${soft_bin_n} ..."
+# #				rm -f ${localbin}/${soft_bin_n}
+# 				ln -s ${soft_bin_p} ${localbin}/${soft_bin_n}
+# 			fi
+# 		done
+# 	else
+# 		echo "\t`basename ${soft_p}` doesn't have bin ..."
+# 	fi
+# done
+
+# if [ -f ${localbin}/ccache ]; then
+# 	echo "Build ccache link"
+# 	echo "        link cc ..."
+# 	ln -s ${localbin}/ccache ${localbin}/cc
+# 	echo "        link gcc ..."
+# 	ln -s ${localbin}/ccache ${localbin}/gcc
+# 	echo "        link g++ ..."
+# 	ln -s ${localbin}/ccache ${localbin}/g++
+# fi
+

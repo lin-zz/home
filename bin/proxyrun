@@ -1,0 +1,17 @@
+#!/bin/zsh
+
+case "$1" in
+"sfbay" | "holland" | "japan" | "prc" )
+	export http_proxy="http://webcache.${1}:8080/"
+	export ftp_proxy="http://webcache.${1}:8080/"
+	shift 1
+	;;
+*)
+	if which $1 &>/dev/null; then
+		export http_proxy="http://webcache.sfbay:8080/"
+		export ftp_proxy="http://webcache.sfbay:8080/"
+	fi
+esac
+
+$*
+

@@ -1,0 +1,98 @@
+#!/bin/sh
+#
+# $Id: cm_env.sh,v 1.7 2000/04/19 11:01:03 casper Exp $
+#
+# Environment setup program for turbo-dir.flp
+#
+# Usage: cm_env [options] {bringover .. args .. |putback .. args .. }
+#
+# -d <level>	Enable debugging output (higher <level>, more output)
+# -o		Set CODEMGR_DIR_FLG instead of just CODEMGR_DIR_FLP
+#		(needed for modified os-net dir.flp)
+# -c <command>	Use <command> instead of "rsh -n %H 'cd %D; %C'"
+#		In the remote command, the following %
+#		expansions are done:
+#			%H	Host with the workspace
+#			%D	Remote directory to run tdf
+#			%C	Remote command to run
+# -C <host>	Indirect remote command through <host> (just a hack)
+# -g		Use gzip/gunzip for compression
+#		(uses less bandwidth, but requires proper path)
+# -p		Use local $PATH at the remote end.
+# -P		Specify path to use at remote end
+# -r <cmd>	Specify pathname for remote turbo-dir.flp executable.
+# -D		Use default def.dir.flp (first found in path) to gather
+#		filenames.
+#
+#
+# Casper Dik (Casper.Dik@Holland.Sun.COM)
+#
+
+Usage () {
+    echo "Usage: $0 [-c cmd] [-r remtdf] [-d level] [-P path] [-opgD] wscmd [arg ... ]" 1>&2
+    exit 1
+}
+
+# Codemgr sets the umask to 0
+umask 022
+
+TDF=turbo-dir.flp
+CODEMGR_DIR_FLP=$TDF
+
+#
+# Test for proper perl revision in $PATH.  Developed on version 5.004; accept
+# /usr/dist/exe/perl5 version 5.003.
+#
+
+tdp=`set -- \`type $TDF\`; echo $3`
+if [ ! -x "$tdp" ]
+then
+    echo "$0: cannot find $TDF in \$PATH" 1>&2
+    exit 1
+fi
+
+headline=`head -1 $tdp | sed -e 's/#![ 	]*//'`
+if $headline -e 'require 5.003' 2>/dev/null
+then
+    : # The (local) script has been edited to support the right version of perl.
+elif perl -e 'require 5.003' 2>/dev/null
+then
+    : perl = perl5, ok
+elif perl5 -e 'require 5.003' 2>/dev/null
+then
+    # These are just sensible defaults, allowing users with similar
+    # environments on both systems no to specify any further options.
+    echo "$0: trying to use 'perl5 $tdp'" 2>&1
+    TDF=$tdp
+    CODEMGR_DIR_FLP="perl5 $TDF"
+    TDF_COMMAND="perl5 $TDF"
+else
+    echo "$0: cannot seem to locate perl 5.003 or better to run $TDF" 1>&2
+    echo "	specify -p, -P or -r or edit the 1st line of $TDF" 1>&2
+fi
+
+while getopts ogd:c:C:pP:r:D c
+do
+    case "$c" in
+    o) CODEMGR_DIR_FLG=$CODEMGR_DIR_FLP;;	# Compatibility with old CM
+    d) TDF_DEBUG=$OPTARG;;
+    c) TDF_RSH=$OPTARG;;
+    C) TDF_RSH='rsh -n '$OPTARG' rsh -n %H '\''"cd %D ; %C"'\' ;;
+    g) TDF_USE_GZIP=1;;
+    p) TDF_PATH=$PATH;;
+    P) TDF_PATH=$OPTARG;;
+    r) TDF_COMMAND=$OPTARG;;
+    # When setting ext_flp, you probably want -o too.
+    D) TDF_EXT_FLP=1 CODEMGR_DIR_FLG=$CODEMGR_DIR_FLP;;
+    *) Usage;;
+    esac
+done
+shift `expr $OPTIND - 1`
+
+if [ $# -lt 1 ]
+then
+    Usage
+fi
+export CODEMGR_DIR_FLG CODEMGR_DIR_FLP TDF_DEBUG TDF_RSH TDF_USE_GZIP TDF_PATH
+export TDF_COMMAND TDF_EXT_FLP
+exec "$@"

@@ -1,0 +1,28 @@
+#!/bin/sh
+
+num=80
+fn=$1
+
+echo "sccs prt $fn | head -$num"
+sccs prt $fn | head -$num
+
+echo "============input rid============"
+read rid
+
+echo "sccs edit $fn"
+sccs edit $fn
+[ $? != 0 ] && return
+
+echo "rm -f $fn"
+rm -f $fn
+[ $? != 0 ] && return
+
+echo "sccs get -r$rid $fn"
+sccs get -r$rid $fn
+[ $? != 0 ] && return
+
+echo "sccs delget -y\"base on r$rid, back out CRT 00086 00090 00118 00119 00120 00122\" $fn"
+#sccs delget -y"base\ on\ r$rid,\ back\ out\ CRT\ 00086\ 00090\ 00118\ 00119\ 00120\ 00122" $fn
+sccs delget -y"base on r$rid, back out CRT 00086 00090 00118 00119 00120 00122" $fn
+[ $? != 0 ] && return
+

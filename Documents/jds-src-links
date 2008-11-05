@@ -1,0 +1,29 @@
+#!/bin/sh
+
+local_jds_base=/sgnome
+local_jds_src=/sgnome/tarballs
+nfs_jds_src=/net/decathlon.prc/export/storage/tarballs-from-ireland
+
+
+if [ ! -d $local_jds_src ]; then
+mkdir -p $local_jds_base
+chmod 777 $local_jds_base
+fi
+
+echo "rm $local_jds_src"
+rm -rf $local_jds_src
+ln -s $nfs_jds_src $local_jds_src
+
+# if [ -d $local_jds_src ]; then
+#     cd $local_jds_src
+#     rm -rf *
+#     for i in $nfs_jds_src/*; do
+# 	    d=`basename $i`
+# 	    echo "link $i to $d"
+# 	    ln -s $i $d
+#     done
+# else
+#     echo "fatal error:"
+#     echo "    Still no directory $local_jds_src"
+#     exit 1;
+# fi

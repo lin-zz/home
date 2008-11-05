@@ -1,0 +1,272 @@
+Before you read this, please subscribe to
+
+	tdf-users@eng
+
+using http://netadmin.
+
+My script replaces "def.dir.flp" with a version that does the following
+(note that two def.dir.flp will be started concurrently: one in the parent ws
+and one in the child ws)
+
+	- the two def.dir.flp sync up using a named pipe; one becomes master.
+	- each determines whether the workspace to scan is local or remote;
+	- if remote, it "rsh" over to the remote server and starts itself there
+	  while the local script reads the remote output.
+	- it reads all SCCS files and prints an excerpt consisting of file size,
+	  first line of SCCS file (which contains a checksum) as well as
+	  pathname
+	- the client sends its information to the master def.dir.flp;
+	- the master compares the information of the two sites; it will
+	  then produce def.dir.flp output which consists of all the filenames
+	  that exist only in one workspace or that differ between workspace.
+	- bringover then examines only those files
+	- to top this all off, it caches the <mtime,SCCS checksum>  for
+	  each file so it only needs to read those files that have actually
+	  changed in a workspace (it only needs to stat them)
+
+So the bringover output looks like:
+
+Examined files: 70
+
+Contents Summary:
+       1   create
+      69   update
+
+.. it examined only 70 files only and not at all 30000+.
+
+Across the atlantic, this is the difference of a couple of minutes
+vs a couple of hours.
+
+The cache defaults to being per user, not per workspace, except in
+when you own the workspace; in that case a $WS/Codemgr_wsdata/tdf directory,
+mode 777 is created.  You can do so by hand if you want to always share
+the cache (on81 uses a shared cache)
+
+Installation guide.
+
+You have:
+	cm_env
+	turbo-dir.flp
+	rexec
+	README (this file)
+
+In the following, we distinguish between two types of systems, one will
+be called "local", the other "remote".
+
+A "local" system is the system you run the putback/bringover command on.
+A "remote" system is the system you putback to/bringover from.
+
+Note that systems will have multiple roles, typically.  In the os-net case,
+you will generally use your system as "local" system and the system hosting
+"onXX-clone" as "remote" system. When doing a putback, the "onXX-gate" system
+will be the "local" system and your own system the "remote" system.
+
+What you need to do for *each* system you will be running putback/bringover
+on and *each* system you bringover from/putback to.
+
+	1) Figure out where perl 5 lives.
+	2) Edit the first line of turbo-dir.flp to reflect the path to
+	   perl5 (by default, it assumes perl5 is known as "perl" and lives
+	   in your $PATH)
+	   Same for "rexec".
+	3) Copy turbo-dir.flp to a directory in your $PATH
+	   If this is a "remote" system, make sure it's a directory in
+	   your default $PATH, as set by rsh.  (If you're a ksh/sh
+	   user, you're pretty much out of luck as all you get is
+	   /usr/bin, see below on how to solve that problem)
+
+	4) If it's a "remote" system, make sure you have some form of access,
+	   such as a .rhosts file, in place.  If you use "rexec" as remote
+	   command, you don't need to create one.
+
+	5) Check installation:
+		On a "local" system, run
+		
+		    $ turbo-dir.flp fail
+
+		    this should print:
+
+		    turbo-dir.flp takes no arguments
+
+		For a "remote" system, run the following command on
+		a "local" system:
+
+		    $ rsh remote turbo-dir.flp fail
+
+		    this should again print
+
+		    turbo-dir.flp takes no arguments
+
+
+CHECK: did you perform the above steps for EACH system involved?
+
+Now, whenever you want to run a bringover/put back run it like this:
+
+	cm_env [options] bringover/putback [bringover/putback options]
+
+cm_env takes the following options:
+
+	-D 			Run the standard def.dir.flp as a way of
+				collecting pathnames; this is slower but
+				has the nice side effect of allowing partial
+				bringovers in ON
+	-d debuglevel 		prints verbose output (-d10 gives a nice amount)
+	-o			use old CODEMGR_DIR_FLG env var, needed for
+				bringovers that use /ws/onXX-tools
+	-c cmd			use alternate rsh command
+				(specified as, e.g., "rsh -l user")
+	-r remcmd		specify full path to remote turbo-dir.flp
+	-p 			prepend local $PATH to PATH on the remote system
+	-P path			prepend "path" to $PATH on the remote system
+				You can only use -p or -P, the last one wins
+	-g			use gzip instead of compress when sending
+				data over
+
+
+If you use the on-tools directory, you must specify the "-o" option or
+cm_env will not cause turbo-dir.flp to be invoked.
+
+For initial runs, it is best to specify -d 10; if you don't get any output
+with -d 10 after 
+
+	cd /ws/onXXX-clone ; def.dir.flp &
+	cd /path/to/your/child ; def.dir.flp
+
+then turbo-dir.flp is not invoked; rerun the command with the -o option.
+
+If you don't get the "cd ... def.dir.flp" at all, you need to specify
+the files to bringover (default is none):
+
+	cm_env .... bringover ... usr/src
+
+Certain options can be set in the ~/.dirflp-turbo/rc file; they will be
+overruled by the commandline; by preceding the option setting with a hostname,
+options will be applied only when the remote workspace host has that name.
+This hostname must match the hostname used in the mount command exactly
+(but not case sensitive)
+
+	# -d option
+	TDF_DEBUG=<level>
+	# -r option
+	TDF_COMMAND=/path/to/turbo-dir.flp
+	# -P option
+	TDF_PATH=/home/casper/bin/sh:/usr/dist/exe
+	# -g option
+	TDF_USE_GZIP=1
+	# -c option for a specific host only (must precede unqualified option)
+	secure.eng TDF_RSH=ssh
+	# -c option
+	TDF_RSH=rsh -l user
+
+You will to use the "-o" option if you use the standard bringover 
+scripts from onxx-tools.
+
+If you use perl 4, you'll get errors like:
+
+    syntax error in file turbo-dir.flp at line 71, next 2 tokens "trace("
+    syntax error in file turbo-dir.flp at line 73, next 2 tokens "trace("
+    syntax error in file turbo-dir.flp at line 78, next 2 tokens "trace("
+    syntax error in file turbo-dir.flp at line 108, next 2 tokens "chomp("
+    syntax error in file turbo-dir.flp at line 125, next 2 tokens "trace("
+    syntax error in file turbo-dir.flp at line 127, next 2 tokens "locate_dir("
+    syntax error in file turbo-dir.flp at line 129, next 2 tokens "locate_dir("
+    syntax error in file turbo-dir.flp at line 130, next 2 tokens "locate_dir("
+    syntax error in file turbo-dir.flp at line 139, next 2 tokens "trace("
+    syntax error in file turbo-dir.flp at line 142, next 2 tokens "trace("
+    turbo-dir.flp has too many errors.
+
+
+Unfortunately, copies of perl4 have infiltrated many of the ON tools
+directories.  But /usr/bin/perl is now standard perl 5, so cm_env -P/usr/bin
+should get you there most of the time.
+
+If you need any more help, have suggestions, etc, I'll be happy to
+help.
+
+A typical successful bringover looks like this:
+
+% cm_env -d 10 bringover
+Parent workspace: /ws/on81-clone
+Child workspace:  /export/data/ws/on81
+
+cd /export/data/ws/on81/usr/src; /opt/SUNWspro/bin/def.dir.flp &
+cd /ws/on81-clone/usr/src; /opt/SUNWspro/bin/def.dir.flp
+10:08:15 Child: $RCSfile: README,v $ $Revision: 1.2 $
+10:08:16 Parent: $RCSfile: README,v $ $Revision: 1.2 $
+10:08:16 Parent: cmd=rsh -n on81.eng 'cd /on81-clone/usr/src; env TDF_WHAT=Parent TZ=MET TDF_DEBUG=10 TDF_USE_GZIP=1 TDF_SUBDIR=/usr/src CODEMGR_WS=/on81-clone turbo-dir.flp|gzip -9'|gunzip -c
+10:08:16 Child: looking for SCCS files in master
+10:08:20 Child: Loaded cache: /export/data/ws/on81/Codemgr_wsdata/tdf/cache
+10:08:31 Parent: $RCSfile: README,v $ $Revision: 1.2 $
+10:08:31 Parent: looking for SCCS files in remote
+10:08:42 Parent: Loaded cache: /home/casper/.dirflp-turbo/on81-clone.1540003:2-cache
+10:09:09 Parent: 30238 SCCS files examined (66 read)
+10:09:17 Parent: Wrote cache /home/casper/.dirflp-turbo/on81-clone.1540003:2-cache
+10:10:57 Child: 30236 SCCS files examined (0 read)
+10:10:59 Child: 30238 files read from fifo
+10:11:00 Child: 66 files to examine, 0 unique in child, 2 unique in parent
+
+Examined files: 66
+
+Bringing over contents changes: 66
+
+... 66 files names
+
+Examined files: 66
+
+Contents Summary:
+       2   create
+      64   update
+
+
+Turbo-dir.flp doesn't gain you anything in initial bringover; to do
+initial bringovers a lot faster, I came up with the following recipe;
+this must run under an ordinary shell and breaks under C-shell:
+
+
+	mkdir on81-mine
+	cd on81-mine
+	workspace create `pwd`
+
+	#
+	#  Get SCCS s. files from gate
+	#
+	#
+	rsh on81-gate \
+	    'cd /ws/on81-clone; find usr/src -name s.\*| cpio -o | gzip '|\
+		gunzip -c | cpio -idm
+
+
+	# extract s.files  to plain files.
+	cd usr/src
+	# Extract files using make, this just doesn't fit on
+	# in NCARGS, so split in two
+	# Use a proper shell for this, not /bin/csh, else use xargs
+	make -f /dev/null `find [A-Za-k]* -name s.\* | sed -ne s:SCCS/s.::p`
+	make -f /dev/null `find [l-z]* -name s.\* | sed -ne s:SCCS/s.::p`
+
+	workspace updatenames
+	workspace parent -p /ws/on81-clone
+
+	# And only then can you use turbo-dir.flp (see webhome.holland/casper)
+	# read instructions.
+
+	cm_env  bringover usr/src
+
+
+
+And what if you don't have shell access to the remote server?
+
+Well, there's a trick for that too but it assumes that you have
+remote shell access to a system that is relatively close.
+
+You can use the TDF_RSH command for this:
+
+cm_env -c "rsh -n nfs.client 'cd /net/%H/%D; %C'" 
+
+Where nfs.client is the system that is close to
+the actual server *and* can mount /net/server/directory.
+
+
+
+
+Casper.Dik@Holland.Sun.COM

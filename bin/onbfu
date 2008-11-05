@@ -1,0 +1,10 @@
+#!/bin/sh
+FASTFS=/opt/onbld/bin/`uname -p`/fastfs
+export FASTFS
+BFULD=/opt/onbld/bin/`uname -p`/bfuld
+export BFULD
+GZIPBIN=/usr/bin/gzip
+export GZIPBIN
+ACR=/opt/onbld/bin/acr
+export ACR
+/opt/onbld/bin/bfu $*

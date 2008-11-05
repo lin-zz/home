@@ -1,0 +1,12 @@
+#!/bin/sh
+
+XMODIFIERS=@im=xim
+export XMODIFIERS
+
+# GTK_IM_MODULE=gtk-im-context-simple
+# export GTK_IM_MODULE
+
+# QT_IM_MODULE=simple
+# export QT_IM_MODULE
+
+exec $*

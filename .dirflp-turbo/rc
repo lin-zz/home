@@ -1,0 +1,15 @@
+# -d option
+#TDF_DEBUG=<level>
+# -r option
+#TDF_COMMAND=/path/to/turbo-dir.flp
+# -P option
+TDF_PATH=$HOME/bin
+# -g option
+TDF_USE_GZIP=1
+# -c option for a specific host only (must precede unqualified option)
+secure.eng TDF_RSH=ssh
+sport-home1.prc TDF_RSH=rsh -l lm161491 -n %H 'cd %D; %C'
+lucky.prc TDF_RSH=ssh -l malin -n %H 'cd %D; %C'
+# -c option
+TDF_RSH=ssh -x -n %H 'cd %D; %C'
+#TDF_RSH=rsh -l lm161491 -n %H 'cd %D; %C'

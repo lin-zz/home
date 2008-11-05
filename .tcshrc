@@ -1,0 +1,260 @@
+#!/bin/tcsh
+## .tcshrc - Lin Ma ( Lin.Ma@Sun.COM )
+
+#set echo; set verbose
+
+###############################################################################
+## tcsh independent specific
+##
+set noclobber
+if ( $?tcsh ) then
+	unset autologout
+
+	set color
+	set autoexpand
+	set autocorrect
+	set autolist
+	set fignore = ( .o \~ )
+	## set listflags=A
+	set prompt = "%n@%m%# "
+
+	# Getting a consistent keyboard mapping
+	bindkey -e
+	bindkey "\e[1~" beginning-of-line	# Home
+	bindkey "\e[7~" beginning-of-line	# Home rxvt
+	bindkey "\e[2~" overwrite-mode		# Ins
+	bindkey "\e[3~" delete-char		# Delete
+	bindkey "\e[4~" end-of-line		# End
+	bindkey "\e[8~" end-of-line		# End rxvt
+
+	bindkey "^R" i-search-back
+	bindkey "^S" i-search-fwd
+	bindkey -k up history-search-backward
+	bindkey -k down history-search-forward
+
+	# completion:
+	complete cd		'p/1/d/'	# Directories only
+	complete chdir		'p/1/d/'
+	complete rmdir		'n/*/d/'
+	complete mkdir		'n/*/d/'
+	complete complete	'p/1/X/'	# Completions only
+	complete uncomplete	'n/*/X/'
+	complete exec		'p/1/c/'	# Commands only
+	complete eval		'p/1/c/'
+	complete scr		'p/1/c/'
+	complete screen		'p/1/c/'
+	complete sudo		'p/1/c/'
+	complete time		'p/1/c/'
+	complete nohup		'p/1/c/'
+	complete kall		'p/1/c/'
+	complete killall	'p/1/c/'
+	complete info		'p/1/c/'
+	complete man		'n/*/c/'
+	complete whatis		'n/*/c/'
+	complete whereis	'n/*/c/'
+	complete wh		'n/*/c/'
+	complete which		'n/*/c/'
+	complete where		'n/*/c/'
+	complete set		'c/*=/f/' 'p/1/s/=' 'n/=/f/'
+	complete unset		'n/*/s/'
+	complete alias		'p/1/a/'	# only aliases
+	complete unalias	'n/*/a/'
+	complete setenv		'n/*/e/'	# variables
+	complete unsetenv	'n/*/e/'
+	complete printenv	'p/1/e/'
+
+endif
+
+###############################################################################
+##  The script should be executed in C locale, so backup locale first
+##  set up basic env and vars
+##
+
+set lv_prv = ${home}/.prv
+set lv_host_type = `uname -p`
+set lv_domain = `setenv LANG C; setenv LC_ALL C; domainname | cut -f2 -d . | /usr/xpg6/bin/tr -s '[:upper:]' '[:lower:]'`
+if ( ${lv_domain} == "eng" || ${lv_domain} == "sfbay" ) then
+	set lv_domain = ""
+else
+	set lv_domain = "-${lv_domain}"
+endif
+set lv_local_prefix = /opt
+set lv_remote_prefix = "/ws/onnv-tools${lv_domain}"
+set lv_jds_prefix = ${lv_local_prefix}/jdsbld
+set lv_ent_softwarz_pool = ( SUNWspro onbld teamware jdsbld netbeans )
+
+###############################################################################
+##  If call by interactive shell, detect whether it's in CBE env
+##
+if ( $?CBE_JDS_ENV ) then
+	set prompt = "cbe@%m%# "
+	unsetenv CBE_JDS_ENV
+	goto lv_tcsh_specific
+endif
+
+###############################################################################
+##  Setup PATH and MANPATH
+##
+setenv MANPATH
+#set localroot = home
+#if ( ${user} != "lm161491" && ${lv_domain} == "-prc" ) \
+#	set localroot = /net/firstserve.prc/export/so/cdehome/malin
+
+#
+# First of all, set up default pathes set.
+#
+set path = ( /usr/ccs/bin ${home}/bin ${home}/bin/${lv_host_type} /bin /sbin /usr/{,s}bin )
+set lv_manp = ( /usr/man /usr/share/man )
+
+#
+# Compiler, onbld and Teamware and others
+#
+foreach lv_ita_var ( ${lv_ent_softwarz_pool} )
+	if ( -d ${lv_local_prefix}/${lv_ita_var} ) then
+		set lv_path_to_base = ${lv_local_prefix}/${lv_ita_var}
+		@ lv_local_flag = 1
+	else if ( -d ${lv_remote_prefix}/${lv_ita_var} ) then
+		set lv_path_to_base = ${lv_remote_prefix}/${lv_ita_var}
+		@ lv_local_flag = 0
+	else
+		continue
+	endif
+	
+	switch ( ${lv_ita_var} )
+	case SUNWspro:
+		if ( ${lv_local_flag} == 0 ) then
+			set lv_path_to_base = ${lv_path_to_base}/SS11
+		else if ( -d ${lv_path_to_base}/SS11 ) then
+			set lv_path_to_base = ${lv_path_to_base}/SS11
+		endif
+		goto default
+	case onbld:
+		set path = ( ${path} ${lv_path_to_base}/bin/${lv_host_type} )
+		goto default
+	default:
+		if ( -d ${lv_path_to_base}/bin ) \
+			set path = ( ${path} ${lv_path_to_base}/bin )
+		if ( -d ${lv_path_to_base}/sbin ) \
+			set path = ( ${path} ${lv_path_to_base}/sbin )
+		if ( -d ${lv_path_to_base}/man ) \
+			set lv_manp = ( ${lv_manp} ${lv_path_to_base}/man )
+		if ( -d ${lv_path_to_base}/share/man ) \
+			set lv_manp = ( ${lv_manp} ${lv_path_to_base}/share/man )
+	endsw
+end
+
+setenv SPRO_NETBEANS_HOME \
+	/usr/dist/share/sunstudio_${lv_host_type}/netbeans/3.5V11
+## setenv SPRO_DBX_PATH
+
+#
+# Other standardize pathes
+#
+set path = ( \
+	${path} \
+	/usr/{local,sfw}/{,s}bin \
+	/etc \
+	/usr/{dt,X11,openwin}/{,s}bin \
+	#/usr/*/{,s}bin \
+)
+set lv_manp = ( \
+	${lv_manp} \
+	/usr/{sfw,local,dt,X11,openwin}/man \
+	/usr//{sfw,local,dt,X11,openwin}/share/man \
+)
+
+#
+# my local path
+#
+#set localroot = ${localroot}/local/${lv_host_type}
+#if ( -d ${localroot} ) then
+#	set path = ( ${path} ${localroot}/bin)
+##	set lv_manp = ( ${lv_manp} ${localroot}/man )
+#endif
+
+# setup MANPATH
+foreach lv_ita_var ( $lv_manp )
+	setenv MANPATH ${MANPATH}:${lv_ita_var}
+end
+
+###############################################################################
+## tcsh dependent specific (based on PATH)
+##
+lv_tcsh_specific:
+
+if ( $?tcsh ) then
+	if ( -X xemacs ) then
+		alias xemacsnw 'xemacs -nw'
+		setenv EDITOR xemacs
+	else if ( -X emacss ) then
+		alias emacsnw 'emacs -nw'
+		setenv EDITOR emacs
+	else
+		setenv EDITOR 'vi'
+	endif
+endif
+
+###############################################################################
+## OS specific
+##
+switch ( ${OSTYPE} )
+case solaris*:
+	alias cbe "${lv_prv}/cbe_jds_wrapper.sh"
+	if ( ! $?lv_ls ) then
+		if ( -x ${lv_jds_prefix}/bin/ls ) then
+			set lv_ls = "${lv_jds_prefix}/bin/ls --color=auto"
+		else
+			set lv_ls = "/bin/ls"
+		endif
+	endif
+	if ( $?term ) then
+		if ( $term == "emacs" ) then
+			unset color
+			set lv_ls = "/bin/ls"
+		endif
+	endif
+	#set PUTBACK='cm_env -g -o putback'
+	alias installSUNWonbld "pkgrm SUNWonbld; /ws/onnv-gate/public/bin/installSUNWonbld"
+	breaksw
+
+case linux*:
+	set lv_ls = "ls --color=auto"
+	endif
+    	breaksw
+endsw
+
+###############################################################################
+## Some aliases and other macroes
+##
+
+# CCACHE
+## setenv CCACHE_PATH $HOME/local/SOS8/bin:/usr/sfw/bin/
+## setenv CCACHE_PREFIX ${localbin}/distcc
+## setenv CCACHE_TEMPDIR
+
+alias ls "${lv_ls}"
+alias ll "${lv_ls} -l"
+alias la "${lv_ls} -la"
+
+if ( ! $?tcsh ) then
+	if ( ! $?REMOTEHOST ) then
+		setenv REMOTEHOST `who -m | cut -f2 -d'(' | cut -f1 -d')'`
+	endif
+else
+	alias lf "ls-F"
+endif
+
+if ( $?REMOTEHOST ) then
+	alias rdpy "setenv DISPLAY ${REMOTEHOST}:0.0"
+endif
+
+alias ldpy 'setenv DISPLAY :0.0'
+
+setenv REAL_NAME 'Lin Ma'
+setenv EMAIL_ADDRESS 'Lin.Ma@Sun.COM'
+setenv CVS_RSH ssh
+setenv SOCKS5_SERVER 192.18.98.61:1080
+setenv DMAKE_ODIR /home/lm161491/.dmake
+setenv DMAKE_MODE distributed
+
+unset lv_*

@@ -1,0 +1,43 @@
+PKG_ARCH=`uname -p`
+WORKSPACE=`workspace name`
+BUILD_TREE=${WORKSPACE}/cdesrc
+BUILD_ARCH=${PKG_ARCH}
+BUILD_DATE=`date '+%m.%d.%y'`
+CDE_PACK_DIR=${WORKSPACE}/cde_test_pkgs/${PKG_ARCH}
+LOGFILE=${CDE_PACK_DIR}/create_log
+export BUILD_TREE BUILD_ARCH CDE_PACK_DIR
+mkdir -p ${CDE_PACK_DIR}
+
+PKGS_SCRIPT=`pwd`/MAKE_SunOS_PACKAGES
+
+if [ ! -f ${PKGS_SCRIPT} ]; then
+	echo ""
+	echo "Must be run in the path which contains 'MAKE_SunOS_PACKAGES'"
+	echo "    ${PKGS_SCRIPT}"
+	echo ""
+	exit 1
+else
+	echo ""
+	echo "Use current file: ${PKGS_SCRIPT}"
+	echo ""
+fi
+
+chmod 755 ${PKGS_SCRIPT}
+
+rm -f ${CDE_PACK_DIR}/.FAILED
+rm -f ${CDE_PACK_DIR}/.PASSED
+
+if [ ! -f ${CDE_PACK_DIR}/create_log ]; then
+	touch ${CDE_PACK_DIR}/create_log
+else
+	echo "" > ${CDE_PACK_DIR}/create_log
+fi
+
+${PKGS_SCRIPT} >> ${CDE_PACK_DIR}/create_log 2>&1
+echo ""
+echo "Check log: ${CDE_PACK_DIR}/create_log"
+echo ""
+chmod 555 ${PKGS_SCRIPT}
+
+cp -f ${BUILD_TREE}/pkgs/Install/upgrade-cde ${CDE_PACK_DIR}/upgrade-cde
+chmod 755 $CDE_PACK_DIR/upgrade-cde

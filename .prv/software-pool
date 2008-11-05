@@ -1,0 +1,6 @@
+# Note /usr/bin/sed will proceed this file, require a RET in the last line
+# A soft with prefix '@' will be processed by NFS pathes
+# A soft with prefix '#' will be ignored
+
+@SUNWspro @onbld @teamware jdsbld netbeans
+ netbeans-5.5 #csw 

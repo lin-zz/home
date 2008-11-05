@@ -1,0 +1,8 @@
+#!/bin/sh
+# Java heap size, in megabytes
+JAVA_HEAP_SIZE=128
+DEFAULT_JAVA_HOME="/usr/jdk/instances/jdk1.5.0/jre"
+if [ "$JAVA_HOME" = "" ]; then
+JAVA_HOME="$DEFAULT_JAVA_HOME"
+fi
+exec "$JAVA_HOME/bin/java" -server -mx${JAVA_HEAP_SIZE}m ${JEDIT} -classpath "/export/home/malin/jedit/4.3pre6/jedit.jar" org.gjt.sp.jedit.jEdit $@

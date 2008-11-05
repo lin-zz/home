@@ -1,0 +1,3 @@
+#!/usr/bin/sh
+
+$HOME/bin/xref -x cscope,etags -m /dev/null -f $*

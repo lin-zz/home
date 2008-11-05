@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Encoding=UTF-8
+Name=azureus
+Type=Application
+Terminal=false
+Exec=/export/home/malin/azureus/azureus
+Name[en_US]=azureus
+Icon[en_US]=/export/home/malin/azureus/Azureus.png
+Icon=/export/home/malin/azureus/Azureus.png
+GenericName[en_US]=
+Comment[en_US]=

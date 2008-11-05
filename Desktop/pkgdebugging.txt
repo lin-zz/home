@@ -1,0 +1,40 @@
+	This is from Tim Knitter on how to debug packages procedure scripts.
+
+	If you found errors in upgrade_log or install_log and you want to find out what is going on, you can do the following:
+
+	Look at bugid 4635483 as a good example for debugging pkginstall and pkgremove with Java packages.
+
+If you want to do debugging under Miniroot during install time, you can do the following:
+
+	cd Solaris_<release>/Tools/Boot/usr/sadm/install/bin
+
+	or
+
+	cd /usr/sadm/install/bin
+
+1.  cp pkgremove pkgremove.exe
+2.  Replace pkgremove with the following shell script:
+
+#!/bin/ksh
+
+args=$*
+
+/usr/sadm/install/bin/pkgremove.exe -v $args
+
+
+3.  cp pkginstall pkginstall.exe
+4.  Replace pkginstall with the following shell script:
+
+#!/bin/ksh
+
+args=$*
+
+/usr/sadm/install/bin/pkginstall.exe -v $args
+
+
+
+Upgrade with Disk Space realloation is a good test case to do.  Basically we back up the /var/sadm/ and other files.  Then we relayout the file system and do newfs , restore the cpio backup and then do execute the upgrade script.  We do all the pkgrms and removef and then pkgadd all the packages just like new install.
+
+Doing pkgrm and pkgadd with -v option is the best way to see how the various install and remove scripts are execised and discovered bugs.
+
+We also support pkgadd on hetergeneous servers and we can do packaging commands on sparc servers with x86 packages and vice versa.  Look at bugid 4891412 for details.  

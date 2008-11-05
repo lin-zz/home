@@ -1,0 +1,19 @@
+#!/usr/bin/sh
+
+MACH=`uname -p` export MACH
+CODEMGR_WS=`/bin/pwd` export CODEMGR_WS
+
+BUILD_TOOLS=/opt
+export BUILD_TOOLS
+SPRO_VROOT=${BUILD_TOOLS}/SUNWspro/SS12
+export SPRO_VROOT
+SRC=/builds/onnv/usr/src
+export SRC
+XREFMK=${BUILD_TOOLS}/onbld/bin/xref.mk
+export XREFMK
+ETAGS=${SPRO_VROOT}/bin/etags
+export ETAGS
+CSCOPE=${BUILD_TOOLS}/onbld/bin/${MACH}/cscope-fast
+export CSCOPE
+CSFLAGS="-bq -f cscope.out"
+export CSFLAGS

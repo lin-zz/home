@@ -1,0 +1,21 @@
+#!/bin/bash
+
+STARDICT_DICT=/usr/share/stardict/dic
+DICT_REPOS=$HOME/soft/dics
+
+cd $STARDICT_DICT
+[[ $? != 0 ]] && {
+echo "cd $STARDICT_DICT error"
+exit 1
+}
+
+rm -f sun*e2t*
+
+for i in $DICT_REPOS/*
+do
+	case $i in
+	*.gz ) gtar zxf $i ;;
+	*.bz2 ) gtar jxf $i ;;
+	* ) echo "how to $i" ;;
+	esac
+done

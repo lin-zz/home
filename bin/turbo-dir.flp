@@ -1,0 +1,776 @@
+#!/usr/bin/env perl
+#
+# This file requires perl 5.
+#
+# Perl 4 gives:
+# syntax error in file turbo-dir.flp.pl at line 62, next 2 tokens "chomp("
+# and much more trouble.
+#
+# Smart, fast, trans atlantic dir.flp
+#
+# $Id: turbo-dir.flp.pl,v 1.9.1.45 2004/01/13 13:41:12 casper Exp $
+#
+# The two dir.flp processes which run simultaneously will rendezvous
+# on a named pipe under ~/.dirflp-turbo.
+#
+# Both dir.flp processes will generate a list of files w/ attributes
+# and send this to a master process.
+#
+# The dir.flp for one workspace will be the master and it will fork a
+# comparison processes which will take the input from both dir.flp
+# and combine it to the list of files seen only once and files that
+# differ on both ends thus reducing the number of actual file opens/reads
+# needed.
+#
+# The master dir.flp will return the list of names; the other
+# will have no output.
+#
+# dir.flp takes no arguments, because you can't pass it any.
+#
+# WARNING: only one turbo dirflp per child/parent workspace per user can
+# be in progress at any one time.
+#
+# Make sure turbo-dir.flp exists on both sides of the ocean and
+# that you have some sort of remote command connectability.
+#
+# Then run it:
+#	env CODEMGR_DIR_FLP=turbo-dir.flp { bringover | putback } ....
+# 
+# If you want to use ssh, set the environment variable TDF_RSH to "ssh -x"
+#
+# Or more generic:  TDF_RSH="rsh -n %H 'cd %D; %C'"
+# (%H expands to the remote host; %D to the directory on the remote host
+# and %C expands to the command to run there)
+#
+# Other options:
+# TDF_USE_GZIP	- when set, use gzip
+# TDF_DEBUG	- numerical variable, the higher the more output.
+# TDF_RSH	- rsh command (%H expands to host, %D to dir, %C for command)
+#		  "-" use NFS not rsh (fast server, no access)
+#		  this should be specified per server in the RC file.
+# TDF_PATH	- path to use remotely (find perl)
+# TDF_COMMAND	- fully fully specified remote command
+# TDF_EXT_FLP	- find names uses external FLP command
+# TDF_RC	- global RC file.
+#
+# Caching mode: TDF will try to cache the file data in ~/<dir>/<wsid>-cache
+# or in $WS/Codemgr_wsdata/tdf/cache, if that directory exists.
+#
+# The ~/.dirflip-turbo/rc file is read at startup and can be used to
+# specify the default value for certain environment variables.
+#
+
+$format = "turbo_dir_flp_1.0";
+$netformat = $format;
+$eofstr = "EOF-$format-EOF";
+$label = "TDF";
+$env = "env";
+$extflp = (defined $ENV{'TDF_EXT_FLP'} ? $ENV{'TDF_EXT_FLP'} : 0);
+
+($prog = $0) =~ s:.*/::;
+
+die "$prog takes no arguments\n" if ($#ARGV >= 0);
+
+chomp($dir = `pwd`);
+
+umask(022);
+
+if ($extflp) {
+    # We may get paths outside of the current working directory, not
+    # starting with ./ but rather rooted in the $CODEMGR_WS_ROOT dir
+    $netformat =~ s/0/1/;
+    delete $ENV{'CODEMGR_DIR_FLG'};
+    delete $ENV{'CODEMGR_DIR_FLP'};
+}
+
+#
+# Local vs remote invocation
+#
+if (defined($root = $ENV{'CODEMGR_WS_ROOT'}) && !defined $ENV{'TDF_WHAT'}) {
+
+    $parent = $ENV{'CODEMGR_WS_PARENT'};
+    $child = $ENV{'CODEMGR_WS_CHILD'};
+
+    $iam_parent = $parent eq $root;
+
+    $label = $iam_parent ? "Parent" : "Child";
+    $env .= " TDF_WHAT=$label";
+
+    ($remotehost, $remotedir) = locate_dir($dir);
+
+    setup_env($remotehost);
+
+    trace(1, '$RCSfile: turbo-dir.flp.pl,v $ $Revision: 1.9.1.45 $' ,"\n");
+
+    ($p_host, $p_dir) = locate_dir($parent);
+    ($c_host, $c_dir) = locate_dir($child);
+
+    #
+    # Need to check whether this directory exists in both workspaces,
+    # if not, there's no place for turbo-dir.flp
+    #
+    die "$prog: working directory not in WS!?!?\n\tws=$root - cwd=$dir\n"
+	unless (($subdir = $dir) =~ s/^$root//);
+
+    trace(100, "subdir = $subdir\n");
+
+    if (! -d ($iam_parent ? $child : $parent) . $subdir) {
+	trace(0, ".$subdir: no such directory in other WS, normal dir.flp\n");
+	dir_flp($dir);
+	exit(0);
+    }
+
+    $env .= " TDF_SUBDIR=" . $subdir;
+    $env .= " CODEMGR_WS=" . ($iam_parent ? $p_dir : $c_dir);
+    $env .= " TDF_EXT_FLP=" . $extflp if $extflp;
+    $ENV{'CODEMGR_WS'} = $iam_parent ? $parent : $child;
+
+    #
+    # Prefer a local master; go with parent if undecided (both local,
+    # both remote)
+    #
+    if (defined($p_host) == defined($c_host)) {
+	$iam_master = $iam_parent;
+    } else {
+	$iam_master = !defined($remotehost);
+    }
+
+    if (defined($remotehost) && $rsh ne "-") {
+	$cmd = $rsh;
+	unless ($cmd =~ s/%H/$remotehost/g && $cmd =~ s/%D/$remotedir/g &&
+		$cmd =~ s/%C/$env $rprog|$compress/g) {
+	    $cmd = "$rsh -n $remotehost exec sh -c " .
+			"'\"cd $remotedir; $env $rprog|$compress\"'";
+	    trace(0, "old style TDF_RSH\n");
+	}
+	$cmd .= "|$zcat";
+    }
+
+    $id = ws2id($child) . "!" . ws2id($parent);
+
+    $fifo = genpathname($id);
+
+    trace(10, "cmd=$cmd\n") if (defined($cmd));
+
+    if ($iam_master) {
+	$data_errors = 0;
+	$nfiles[0] = $nfiles[1] = 0;
+	#
+	# The first thing we do is wait for the FIFO to appear
+	# so both finds can run in parallel.
+	#
+	# If no fifo appears within 60 seconds, something is seriously
+	# wrong; abort.  Fifo creation should be nearly instantaneous as
+	# it's done in the dir.flp that is started in parallel
+	#
+	trace(15,"waiting for fifo ($fifo) to appear\n");
+	alarm(60);
+	sleep(1) while (! -e $fifo);
+
+	trace(13,"opening fifo\n");
+	open(DATA1,"<$fifo");
+	alarm(0);
+	unlink($fifo);
+
+	trace(7,"looking for SCCS files in master\n");
+	if (defined($cmd)) {
+	    open(DATA,"$cmd|");
+	    grok_data($iam_parent);
+	    close(DATA);
+	} else {
+	    # Run it locally, internally.
+	    dir_flp_db();
+	}
+	trace(14,"reading data from fifo\n");
+	open(DATA,"<&DATA1");
+	close(DATA1);
+	grok_data(!$iam_parent);
+	close(DATA);
+
+	trace(2, "$nfiles[!$iam_parent] files read from fifo\n");
+
+	dump_data() unless ($data_errors);
+
+	exit($data_errors);
+    } else {
+	mkfifo($fifo);
+	#
+	# This can hang if the fifo is never opened by the master,
+	# perhaps we should communicate something back to the client.
+	# Also, in future we might want to make it more dir.flp compatible
+	# in that the slave also returns a list of files.
+	#
+	# We buffer all of the $cmd output until the remote end is complete;
+	# we assume that grok_data is relatively fast and will complete
+	# quickly whereas we don't want to ever block the remote end from
+	# running find and sending stuff
+	#
+	if (defined($cmd)) {
+	    exec "$cmd | dd of=$fifo obs=4096k 2>/dev/null";
+	    exit(1);
+	}
+	trace(7,"looking for SCCS files in slave\n");
+	if ($parallel) {
+	    trace(15,"running \"|$parallel\" from local disk\n");
+	    open(STDOUT, "|$parallel>$fifo");
+	} else {
+	    open(STDOUT,">$fifo");
+	}
+	# And continue below.
+    }
+} else {
+    if (defined($ENV{'TDF_WHAT'})) {
+	$label = "$ENV{'TDF_WHAT'}";
+    } else {
+	$label=`uname -n`;
+	chop($label);
+    }
+    if (!defined($ENV{'CODEMGR_WS'}) || !defined($ENV{'TDF_SUBDIR'}) ||
+	! -d defined($ENV{'CODEMGR_WS'})) {
+	my($ws,$dir);
+	$dir = `pwd`;
+	chomp($dir);
+	$ws = defined($ENV{'CODEMGR_WS'}) && -d $ENV{'CODEMGR_WS'} ?
+			    $ENV{'CODEMGR_WS'} : `workspace name`;
+	chomp($ws);
+	if ($ws ne "" && $dir =~ m/^$ws/) {
+	    $subdir = $';
+	    $ENV{'CODEMGR_WS'} = $ws;
+	} else {
+	    trace(0, "\"$dir\" not in proper workspace (ws= \"$ws\")\n");
+	    exit(1);
+	}
+	$ENV{'CODEMGR_WS_ROOT'} = $ws;
+    } else {
+	$ENV{'CODEMGR_WS_ROOT'} = $ENV{'CODEMGR_WS'};
+	$subdir = $ENV{'TDF_SUBDIR'};
+    }
+    # This is needed when executing the standard def.dir.flp command
+    # to list pathnames.
+    trace(1, '$RCSfile: turbo-dir.flp.pl,v $ $Revision: 1.9.1.45 $' ,"\n");
+    trace(7,"looking for SCCS files in remote\n");
+}
+
+dir_flp_data();
+exit(0);
+
+#
+# Find the actual hostname, pathname location of a directory.
+#
+sub locate_dir {
+    my($dir) = @_;
+    my($df);
+    my($extra);
+    my($mnt,$rmnt);
+    my($remotedir, $remotehost);
+
+    # For the split OS-net ws mounts + workaround for 2.6 autofs bug
+    if (-d "$dir/Codemgr_wsdata") {
+	$extra = "/Codemgr_wsdata";
+	$df = `df "$dir/Codemgr_wsdata/."`; # /. for 2.6 bug
+    } else {
+	$extra = "";
+	$df = `df $dir`;
+    }
+    chomp($df);
+
+    if ($df =~ /^(\S+)\s*\(([^)\s]*)\s*\)/) {
+	# System V style output; $2 contains value between (),
+	# $1 is actual local mount point
+	$mnt = $1;
+	$rmnt = $2;
+	trace(100, "$dir:$extra:$mnt -- $rmnt\n");
+	if ($extra ne "" && $mnt =~ /$extra$/) {
+	    $mnt = $`;
+	    $rmnt =~ s/$extra$//;
+	    trace(100, "	$mnt -- $rmnt\n");
+	}
+	if ($rmnt =~ /:/) {
+	    $remotehost = $`;
+	    $remotedir = $';
+	    die "$prog: unexpected directory inconsistency: `$dir' != `$mnt'\n"
+		    if ($dir !~ /^$mnt/);
+	    $remotedir .= $';
+	    trace(100, "loc_path -> ($remotehost, $remotedir)\n");
+	    return ($remotehost, $remotedir);
+	}
+    } else {
+	# harder, output split over multiple lines, header always.
+	die "$prog: Can't grok BSD df output (yet)\n"
+    }
+    return undef;
+}
+
+use File::Find;
+
+sub find_files {
+    my($fun, $dir) = @_;
+
+    if ($extflp) {
+	my($ws) = $ENV{'CODEMGR_WS_ROOT'} . "/";
+	my($fulldir) = `cd $dir; pwd`;
+	my($pwd) = `pwd`;
+	chomp($pwd);
+	chomp($fulldir);
+
+	trace(10,"running (cd $dir; def.dir.flp)\n");
+	trace(100,"\tfulldir = $fulldir\n");
+
+	my($lastdir) = "/";
+	open(DEFDIRFLP,"cd $dir; def.dir.flp|");
+	while (<DEFDIRFLP>) {
+	    my($fdir);
+
+	    # Messy regexps: make sure the pathname contains SCCS/s.,  single /
+	    s://:/:g;
+	    s:/([^/]*)$:/SCCS/s.$1: unless (m:/SCCS/s\.:);
+	    next if exists $seen{$_};
+	    $seen{$_} = 1;
+	    chomp;
+	    # Get the directory
+	    ($fdir = $_) =~ s:/[^/]*$::;
+	    # Set the Fake find relative to $dir pathname.
+	    unless (($File::Find::name = $_) =~ s:^$fulldir:$dir:) {
+		# This is a special pathname.
+		($File::Find::name = $_) =~ s:^$ws::;
+	    }
+	    ($File::Find::dir = $File::Find::name) =~ s:/[^/]*$::;
+	    trace(110,"def.dir.flp: $File::Find::name\n");
+
+	    $_ =~ s:.*/::;
+	    chdir($fdir) if ($fdir ne $lastdir);
+	    $lastdir = $fdir;
+	    &$fun() if (-f $_);
+	}
+	chdir($pwd);
+	close(DEFDIRFLP);
+    } else {
+	find($fun, $dir);
+    }
+}
+#
+# Special dir_flp that outputs our format.
+#
+sub dir_flp_data {
+    local($count) = 0;
+    local($opened) = 0;
+
+    load_cache();
+
+    #$File::Find::dont_use_nlink = 1;
+    print $netformat, "\n";
+    $dprint = 1;
+    find_files(\&sccs_find_data, ".");
+    print $eofstr, "\n";
+    trace(1, "$count SCCS files examined ($opened read)\n");
+
+    dump_cache();
+}
+
+#
+# dir_flp directly into our db
+#
+sub dir_flp_db {
+    local($count) = 0;
+    local($opened) = 0;
+
+    load_cache();
+
+    #$File::Find::dont_use_nlink = 1;
+    $dprint = 0;
+    find_files(\&sccs_find_data, ".");
+    trace(1, "$count SCCS files examined ($opened read)\n");
+
+    dump_cache();
+}
+
+#
+# Standard dir_flp for cases where we don't use our special
+# algorithm.
+#
+sub dir_flp {
+    #$File::Find::dont_use_nlink = 1;
+    find_files(\&sccs_print_normal, $_[0]);
+}
+
+#find (\&watch, "." );
+
+#
+# Print SCCS file names in SCCS directories.
+#
+sub sccs_print_normal {
+    print "$File::Find::name\n"
+	if ($File::Find::dir =~ m:/SCCS$: && m/^s\./);
+}
+
+#
+# Print SCCS filenames plus condensed info.  If this function
+# is changed the $format entry must be changed also.
+# The first line of the SCCS file contains a checksum of the entire
+# file.
+#
+# Used cached info if the $mtime & $size match
+#
+sub sccs_get_data {
+    my($f, $b) = @_;
+    my($size,$mtime) = (lstat($b))[7,9];
+    my($key,$line);
+
+    $f =~ s:^\./:$xsubdir:;
+
+    if (defined($mtime{$f}) && $mtime{$f} == $mtime &&
+	    $key{$f} =~ m/$size\01/) {
+	$key = $key{$f};
+    } else {
+	$opened ++;
+	$changes ++;
+	open(SCCSFILE,"<$b") || trace(0,"$f: $!\n");
+	trace(99,"Opened: $f\n");
+	$line = <SCCSFILE> || "";
+	close(SCCSFILE);
+	chomp($line);
+	$key = $size . $line;
+	$key{$f} = $key;
+	$mtime{$f} = $mtime;
+    }
+    $key;
+}
+
+sub sccs_find_data {
+    if ($File::Find::name =~ m:/Codemgr_wsdata:) {
+	$File::Find::prune = 1;
+	return;
+    }
+
+    # Subdir with trailing / for sccs_get_data substitution
+    # Note that "" is also a valid subdir.
+    ($xsubdir = $subdir) =~ s:^(/)(.*)$:$2$1:;
+
+    if ($_ eq "SCCS") {
+	$File::Find::prune = 1;
+	chdir($_);
+	opendir(DIR, ".");
+	my(%shash, %phash, $key);
+
+	map {
+	    $shash{$_} = 1 if (/^s\./);
+	     if (/^p\./) {
+		#trace(10,$File::Find::name . "/$_\n");
+		s/^p/s/;
+		$phash{$_} = 1
+	    }
+	} readdir(DIR);
+	closedir(DIR);
+
+	map {
+	    my($name) = "$File::Find::name/$_";
+	    my($key) = sccs_get_data($name, $_);
+	    $key = "p-exist-$label-" . $key
+		if (defined $phash{$_});
+	    if ($dprint) {
+		print "$name\0", $key, "\n";
+	    } else {
+		update_path($name, $key, $iam_parent);
+	    }
+	    trace(100,"Data: $name\n");
+	    $count ++;
+	} keys %shash;
+	chdir("..");
+    } elsif ($File::Find::dir =~ m:/SCCS$: && m/^s\./) {
+	# For -D (extflp)
+	my($name) = ($File::Find::name);
+	my($key) = sccs_get_data($name, $_);
+	my($pname);
+	($pname = $_) =~ s/^s\./p./;
+	$key = "p-exist-$label-$key" if (-f $pname);
+	if ($dprint) {
+	    print "$name\0", $key, "\n";
+	} else {
+	    update_path($name, $key, $iam_parent);
+	}
+	trace(100,"Data: $name\n");
+	$count ++;
+    }
+}
+
+#
+# Generate pathname for cache.
+#
+sub genpathname {
+    die "$prog: no \$HOME set\n"
+	unless defined($ENV{'HOME'});
+    my($path) = $ENV{'HOME'} . "/.dirflp-turbo";
+    mkdir ($path, 0700) if (! -d $path);
+
+    $path .= "/" . $_[0];
+    return $path;
+}
+
+#
+# Mkfifo function; create a named pipe of $HOME/.dirflp-turbo/pipe
+#
+sub mkfifo() {
+    unlink($_[0]);
+    system("mkfifo", "-m", "0600", $_[0]) &&
+	die "$prog: mkfifo `$_[0]' failed\n";
+}
+
+#
+# ws2id - returns a unique ID for a ws name.
+#
+sub ws2id {
+    my($dev, $ino) = (stat($_[0]))[0,1];
+    my($id);
+    
+    ($id = $_[0]) =~ s:.*/::g;
+
+    sprintf "%s.%x:%x", $id, $dev, $ino
+}
+
+sub update_path
+{
+    my($path, $attrib, $whoami) = @_;
+
+    $nfiles[$whoami]++;
+
+    if (!defined($db{$path})) {
+	$db{$path} = $attrib;
+	$src{$path} = $whoami;
+    } else {
+	$check{$path} = $db{$path} eq $attrib;
+	$src{$path} = 2;
+    }
+}
+
+sub grok_data
+{
+    my($whoami) = @_;
+    my($tmp) = scalar(<DATA>);
+    my($path, $attrib, $last);
+
+    chomp($tmp);
+    if ($tmp ne $netformat) {
+	warn "$prog: version mismatch or error: \"$tmp\" != \"$netformat\"\n";
+	$data_errors ++;
+    }
+
+    while (<DATA>) {
+	chomp;
+	$last = $_;
+	next if ($data_errors);
+	if (/\0/) {
+	    update_path($`,$',$whoami);
+	} else {
+	    if ($last ne $eofstr) {
+		warn "$prog: garbled entry found: \"$last\"\n";
+		$data_errors++;
+	    }
+	    last;
+	}
+    }
+    if (!$data_errors && $last ne $eofstr) {
+	warn "$prog: no correct eof marker found: \"$last\" != \"$eofstr\"\n";
+	$data_errors++;
+    }
+}
+
+sub dump_data
+{
+    my($count, $parent, $child);
+    $count = $parent = $child = 0;
+
+    foreach $k (sort keys %db) {
+	if (!$check{$k}) {
+	    if ($src{$k} == 0) {
+		$child ++;
+	    } elsif ($src{$k} == 1) {
+		$parent ++;
+	    }
+	    unless ($k =~ s/^\./$dir/) {
+		$k = $ENV{'CODEMGR_WS_ROOT'} . "/" . $k;
+	    }
+	    trace(11, "Different: $k\n");
+	    print "$k\n";
+	    $count ++;
+	}
+    }
+    trace(1, "$count files to examine, $child unique in child, ",
+	"$parent unique in parent\n");
+}
+
+sub trace
+{
+    my($level) = shift;
+    print STDERR sprintf("%02d:%02d:%02d",(localtime())[2,1,0])," $label: ", @_
+	    if ((defined($ENV{'TDF_DEBUG'}) && $ENV{'TDF_DEBUG'}) >= $level);
+}
+
+sub load_cache
+{
+    return unless (set_cache_name());
+    $changes = 0;
+
+    open(CACHE,"<$cache") || return;
+
+    open(NAMETABLE,"<$ENV{'CODEMGR_WS'}/Codemgr_wsdata/nametable") || return;
+    $vers = <NAMETABLE>;
+    while (<NAMETABLE>) {
+	my($p) = split;
+	$p =~ s:/([^/]*)$:/SCCS/s.$1:;
+	$key{$p} = 1;
+    }
+    close(NAMETABLE);
+
+    $vers = <CACHE>;
+    if ($vers eq "$format\n") {
+	while (<CACHE>) {
+	    chomp;
+	    my($p,$m,$k) = split(/\0/);
+	    $p =~ s:^/::;			# Compat with old cache
+	    if (!defined($key{$p})) {
+		$changes ++;
+		trace(10,"Dropped: $p\n");
+		next;
+	    }
+	    if (defined($k) && $k ne "") {
+		$mtime{$p} = $m;
+		$key{$p} = $k;
+	    }
+	}
+	trace(10, "Loaded cache: $cache\n");
+    }
+    close(CACHE);
+}
+
+sub dump_cache
+{
+    return if (!defined($newcache) || $changes == 0 && $newcache eq $cache);
+
+    my($nc) = "$newcache.$$.new";
+
+    open(CACHE,">$nc") || return;
+    chmod 0644, $nc;
+    print CACHE "$format\n";
+    foreach $k (keys %mtime) {
+	print CACHE "$k\0$mtime{$k}\0$key{$k}\n";
+    }
+    close(CACHE);
+    rename($nc, $newcache);
+    trace(10, "Wrote cache $newcache\n");
+    if ($newcache ne $cache && -f $cache) {
+	trace(10, "Removed old cache $cache\n");
+	unlink($cache);
+    }
+}
+
+sub set_cache_name
+{
+    if (!defined($cache)) {
+	my($name) = $ENV{'CODEMGR_WS'};
+	if (!defined($name)) {
+	    $name = `workspace name`;
+	    chomp($name);
+	    if (!defined($name) || $name eq "") {
+		trace (0,"can't find workspace name\n");
+		return undef;
+	    }
+	    $ENV{'CODEMGR_WS'} = $name;
+	}
+	my($id) = ws2id($name);
+	$cache = genpathname($id . "-cache");
+	$tdfdir = "$name/Codemgr_wsdata/tdf";
+	if (-o "$name/Codemgr_wsdata" && ! -d $tdfdir) {
+	    trace(0, "creating mode 777 $tdfdir\n");
+	    mkdir($tdfdir, 0777);
+	    chmod 0777, $tdfdir;
+	}
+	if (-d $tdfdir) {
+	    $newcache = "$name/Codemgr_wsdata/tdf/cache";
+	    if (-f $newcache) {
+		if (-f $cache) {
+		    trace(10, "Removed old cache $cache\n");
+		    unlink($cache);
+		}
+		$cache = $newcache;
+	    }
+	} else {
+	    $newcache = $cache;
+	}
+    }
+    $cache;
+}
+
+sub loadrc
+{
+	my($rhp, $rc) = @_;
+	#
+	# Read rc file, only allow TDF_ variables.
+	# Don't override environment settings
+	#
+	if (open(RC,"<$rc")) {
+		trace(30, "RC: reading: $rc\n");
+		while (<RC>) {
+			next if (/^\s*#/ || /^\s*$/);
+			if (/\b(TDF_[A-Z_]+)\s*=\s*(.*)/) {
+				my($var,$val,$prefix) = ($1, $2, $`);
+				my($hs);
+				next if (($hs = ($prefix !~ /^\s*$/)) &&
+					$prefix !~ /^\s*$rhp\s+$/i);
+
+				if (!defined($ENV{$var}) ||
+				    (defined($fromrc{$var}) &&
+				     $fromrc{$var} < $hs)) {
+					$ENV{$var} = $val;
+					$fromrc{$var} = $hs;
+					trace(55, "RC: $var=$val ($hs)\n");
+				} else {
+					trace(54, "RC: $var already set ",
+					    "($ENV{$var}), ",
+					    "$fromrc{$var} = $hs",
+					    "val($val) ignored\n");
+				}
+				next;
+			}
+			chomp;
+			trace(0, "RC: $_: can't set\n");
+		}
+		close(RC);
+	} else {
+		trace(25, "RC: $rc: can't open: $!\n");
+	}
+}
+
+sub setup_env
+{
+    my($rh) = @_;
+    my($rhp) = defined($rh) ? $rh : "";
+
+    #
+    # Load global RC file and user RC file.
+    # User file has precendence (is loaded first)
+    # But host specific overrides non-specific
+    #
+    loadrc($rhp, genpathname('rc'));
+    loadrc($rhp, $ENV{'TDF_RC'}) if (defined $ENV{'TDF_RC'});
+
+    $parallel = (defined $ENV{'TDF_PARALLEL'} ? $ENV{'TDF_PARALLEL'} : "");
+
+    if (defined($rh)) {
+	$rsh = $ENV{'TDF_RSH'} || "rsh -n %H exec sh -c '\"cd %D; %C\"'";
+	#
+	# If TDF_PATH is set, *prepend* it to the default remote PATH.
+	#
+	$env .= " PATH=$ENV{'TDF_PATH'}:\$PATH" if (defined($ENV{'TDF_PATH'}));
+	$env .= " TZ=$ENV{'TZ'}" if (defined($ENV{'TZ'}));
+	$env .= " TDF_DEBUG=$ENV{'TDF_DEBUG'}" if (defined($ENV{'TDF_DEBUG'}));
+
+	if (defined($ENV{'TDF_USE_GZIP'})) {
+	    $zcat = "gunzip -c";
+	    $compress = "$env gzip -9";
+	} else {
+	    $zcat = "zcat";
+	    $compress = "compress";
+	}
+	$rprog = defined($ENV{'TDF_COMMAND'}) ? $ENV{'TDF_COMMAND'} : $prog;
+    }
+}
